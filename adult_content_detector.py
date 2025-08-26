@@ -269,21 +269,21 @@ class AdultContentDetector:
                 return np.abs(model.coef_[0])
         return None
     
-    def plot_results(self, results):
-        """Plot comprehensive results"""
-        print("\nGenerating plots...")
+    def plot_performance_metrics(self, results):
+        """Plot performance metrics (first image)"""
+        print("\nGenerating performance metrics plot...")
         
         # Set up the plotting style
         plt.style.use('default')
-        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-        fig.suptitle('Model Comparison Results', fontsize=16, fontweight='bold')
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        fig.suptitle('Model Performance Comparison', fontsize=16, fontweight='bold')
         
         # 1. Metrics comparison
         metrics = ['accuracy', 'precision', 'recall', 'f1', 'auc', 'auc_pr']
         metric_names = ['Accuracy', 'Precision', 'Recall', 'F1-Score', 'AUC-ROC', 'AUC-PR']
         
         x = np.arange(len(metrics))
-        width = 0.2
+        width = 0.15
         
         for i, (model_name, result) in enumerate(results.items()):
             values = [result[metric] for metric in metrics]
@@ -292,9 +292,9 @@ class AdultContentDetector:
         axes[0, 0].set_xlabel('Metrics')
         axes[0, 0].set_ylabel('Score')
         axes[0, 0].set_title('Model Performance Comparison')
-        axes[0, 0].set_xticks(x + width * 1.5)
+        axes[0, 0].set_xticks(x + width * 2)
         axes[0, 0].set_xticklabels(metric_names, rotation=45)
-        axes[0, 0].legend()
+        axes[0, 0].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         axes[0, 0].grid(True, alpha=0.3)
         
         # 2. ROC Curves
@@ -311,30 +311,16 @@ class AdultContentDetector:
         
         # 3. Precision-Recall Curves
         for model_name, result in results.items():
-            axes[0, 2].plot(result['recall_curve'], result['precision_curve'], 
+            axes[1, 0].plot(result['recall_curve'], result['precision_curve'], 
                            label=f"{model_name} (AUC-PR = {result['auc_pr']:.3f})")
         
-        axes[0, 2].set_xlabel('Recall')
-        axes[0, 2].set_ylabel('Precision')
-        axes[0, 2].set_title('Precision-Recall Curves')
-        axes[0, 2].legend()
-        axes[0, 2].grid(True, alpha=0.3)
+        axes[1, 0].set_xlabel('Recall')
+        axes[1, 0].set_ylabel('Precision')
+        axes[1, 0].set_title('Precision-Recall Curves')
+        axes[1, 0].legend()
+        axes[1, 0].grid(True, alpha=0.3)
         
-        # 4. Confusion Matrices (show first 2 models)
-        model_names = list(results.keys())
-        for i in range(min(2, len(model_names))):
-            model_name = model_names[i]
-            cm = results[model_name]['confusion_matrix']
-            
-            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                       xticklabels=['Non-Adult', 'Adult'],
-                       yticklabels=['Non-Adult', 'Adult'],
-                       ax=axes[1, i])
-            axes[1, i].set_title(f'{model_name} Confusion Matrix')
-            axes[1, i].set_xlabel('Predicted')
-            axes[1, i].set_ylabel('Actual')
-        
-        # 5. Feature Importance (for models that support it)
+        # 4. Feature Importance (for models that support it)
         importance_data = []
         importance_labels = []
         
@@ -351,16 +337,79 @@ class AdultContentDetector:
                     importance_labels.extend([f"{model_name}: {feat}" for feat in top_features])
         
         if importance_data:
-            axes[1, 2].barh(range(len(importance_data)), importance_data)
-            axes[1, 2].set_yticks(range(len(importance_labels)))
-            axes[1, 2].set_yticklabels(importance_labels, fontsize=8)
-            axes[1, 2].set_xlabel('Feature Importance')
-            axes[1, 2].set_title('Top Features by Model')
-            axes[1, 2].grid(True, alpha=0.3)
+            axes[1, 1].barh(range(len(importance_data)), importance_data)
+            axes[1, 1].set_yticks(range(len(importance_labels)))
+            axes[1, 1].set_yticklabels(importance_labels, fontsize=8)
+            axes[1, 1].set_xlabel('Feature Importance')
+            axes[1, 1].set_title('Top Features by Model')
+            axes[1, 1].grid(True, alpha=0.3)
         
         plt.tight_layout()
-        plt.savefig('model_comparison_results.png', dpi=300, bbox_inches='tight')
+        plt.savefig('model_performance_metrics.png', dpi=300, bbox_inches='tight')
         plt.show()
+    
+    def plot_confusion_matrices(self, results):
+        """Plot confusion matrices for all models (second image)"""
+        print("\nGenerating confusion matrices plot...")
+        
+        # Set up the plotting style
+        plt.style.use('default')
+        
+        # Calculate grid dimensions for 5 models
+        n_models = len(results)
+        n_cols = 3
+        n_rows = (n_models + n_cols - 1) // n_cols
+        
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(18, 6 * n_rows))
+        fig.suptitle('Confusion Matrices for All Models', fontsize=16, fontweight='bold')
+        
+        # Flatten axes if there's only one row
+        if n_rows == 1:
+            axes = axes.reshape(1, -1)
+        
+        # Plot confusion matrix for each model
+        for i, (model_name, result) in enumerate(results.items()):
+            row = i // n_cols
+            col = i % n_cols
+            
+            cm = result['confusion_matrix']
+            
+            # Create heatmap
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                       xticklabels=['Non-Adult', 'Adult'],
+                       yticklabels=['Non-Adult', 'Adult'],
+                       ax=axes[row, col])
+            
+            axes[row, col].set_title(f'{model_name}\nConfusion Matrix')
+            axes[row, col].set_xlabel('Predicted')
+            axes[row, col].set_ylabel('Actual')
+            
+            # Add metrics text
+            accuracy = result['accuracy']
+            precision = result['precision']
+            recall = result['recall']
+            f1 = result['f1']
+            
+            textstr = f'Accuracy: {accuracy:.3f}\nPrecision: {precision:.3f}\nRecall: {recall:.3f}\nF1: {f1:.3f}'
+            props = dict(boxstyle='round', facecolor='wheat', alpha=0.8)
+            axes[row, col].text(0.02, 0.98, textstr, transform=axes[row, col].transAxes, 
+                               fontsize=9, verticalalignment='top', bbox=props)
+        
+        # Hide empty subplots
+        for i in range(n_models, n_rows * n_cols):
+            row = i // n_cols
+            col = i % n_cols
+            axes[row, col].set_visible(False)
+        
+        plt.tight_layout()
+        plt.savefig('model_confusion_matrices.png', dpi=300, bbox_inches='tight')
+        plt.show()
+    
+    def plot_results(self, results):
+        """Plot comprehensive results (legacy method - now calls both separate methods)"""
+        print("\nGenerating plots...")
+        self.plot_performance_metrics(results)
+        self.plot_confusion_matrices(results)
     
     def print_results(self, results):
         """Print comprehensive results"""
