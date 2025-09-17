@@ -25,6 +25,9 @@ warnings.filterwarnings('ignore')
 np.random.seed(42)
 import tensorflow as tf
 tf.random.set_seed(42)
+import os
+import pickle
+import tempfile
 
 class AdultContentDetector:
     def __init__(self):
@@ -269,6 +272,31 @@ class AdultContentDetector:
                 return np.abs(model.coef_[0])
         return None
     
+    def get_model_size(self, model, model_name):
+        """Get the size of a model in MB and KB"""
+        try:
+            # Create a temporary file to save the model
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl') as tmp_file:
+                if model_name == 'Neural Network':
+                    # For neural network, save as h5 file
+                    tmp_file.close()
+                    model.save(tmp_file.name + '.h5')
+                    size_bytes = os.path.getsize(tmp_file.name + '.h5')
+                    os.unlink(tmp_file.name + '.h5')
+                else:
+                    # For other models, save as pickle
+                    pickle.dump(model, tmp_file)
+                    tmp_file.close()
+                    size_bytes = os.path.getsize(tmp_file.name)
+                    os.unlink(tmp_file.name)
+            
+            size_mb = size_bytes / (1024 * 1024)
+            size_kb = size_bytes / 1024
+            return size_mb, size_kb
+        except Exception as e:
+            print(f"Error measuring {model_name} size: {e}")
+            return None, None
+    
     def plot_performance_metrics(self, results):
         """Plot performance metrics (first image)"""
         print("\nGenerating performance metrics plot...")
@@ -411,24 +439,97 @@ class AdultContentDetector:
         self.plot_performance_metrics(results)
         self.plot_confusion_matrices(results)
     
+    def evaluate_all_splits(self):
+        """Evaluate all models on Train, Validation, and Test splits and return metrics."""
+        print("\nEvaluating models on train, validation, and test sets...")
+        results_splits = {
+            'Train': {},
+            'Validation': {},
+            'Test': {}
+        }
+        
+        # Traditional models on TF-IDF features
+        for name, model in self.trained_models.items():
+            results_splits['Train'][name] = self.evaluate_model(model, self.X_train_tfidf, self.y_train, name)
+            results_splits['Validation'][name] = self.evaluate_model(model, self.X_val_tfidf, self.y_val, name)
+            results_splits['Test'][name] = self.evaluate_model(model, self.X_test_tfidf, self.y_test, name)
+        
+        # Neural network on padded sequences
+        if self.neural_network is not None:
+            name = 'Neural Network'
+            results_splits['Train'][name] = self.evaluate_model(self.neural_network, self.X_train_padded, self.y_train, name)
+            results_splits['Validation'][name] = self.evaluate_model(self.neural_network, self.X_val_padded, self.y_val, name)
+            results_splits['Test'][name] = self.evaluate_model(self.neural_network, self.X_test_padded, self.y_test, name)
+        
+        return results_splits
+    
+    def print_auc_results(self, results_splits):
+        """Print AUC-ROC and AUC-PR for Train, Validation, and Test splits for all models."""
+        print("\n" + "="*80)
+        print("AUC METRICS BY DATA SPLIT")
+        print("="*80)
+        
+        # Determine model order from any split (prefer Test if present)
+        reference_split = 'Test' if 'Test' in results_splits else list(results_splits.keys())[0]
+        model_names = list(results_splits[reference_split].keys())
+        
+        header = f"{'Model':<20} | {'Train AUC':<10} {'Train AUC-PR':<12} | {'Val AUC':<10} {'Val AUC-PR':<12} | {'Test AUC':<10} {'Test AUC-PR':<12}"
+        print(header)
+        print("-" * len(header))
+        
+        for model_name in model_names:
+            train_auc = results_splits['Train'][model_name]['auc']
+            train_aupr = results_splits['Train'][model_name]['auc_pr']
+            val_auc = results_splits['Validation'][model_name]['auc']
+            val_aupr = results_splits['Validation'][model_name]['auc_pr']
+            test_auc = results_splits['Test'][model_name]['auc']
+            test_aupr = results_splits['Test'][model_name]['auc_pr']
+            
+            print(f"{model_name:<20} | {train_auc:<10.4f} {train_aupr:<12.4f} | {val_auc:<10.4f} {val_aupr:<12.4f} | {test_auc:<10.4f} {test_aupr:<12.4f}")
+    
+    def print_class_distribution(self):
+        """Report the number of positive (1) and negative (0) classes for each split."""
+        print("\n" + "="*80)
+        print("CLASS DISTRIBUTION BY DATA SPLIT")
+        print("="*80)
+        for split_name, y in [("Train", self.y_train), ("Validation", self.y_val), ("Test", self.y_test)]:
+            total = len(y)
+            positives = int(np.sum(y))
+            negatives = int(total - positives)
+            pos_pct = (positives / total) if total else 0.0
+            neg_pct = (negatives / total) if total else 0.0
+            print(f"{split_name:<12} Total: {total:<6} Pos: {positives:<6} ({pos_pct:.2%})  Neg: {negatives:<6} ({neg_pct:.2%})")
+    
     def print_results(self, results):
         """Print comprehensive results"""
         print("\n" + "="*80)
         print("MODEL COMPARISON RESULTS")
         print("="*80)
         
-        # Create results table
+        # Create results table with model sizes
         metrics = ['accuracy', 'precision', 'recall', 'f1', 'auc', 'auc_pr']
         metric_names = ['Accuracy', 'Precision', 'Recall', 'F1-Score', 'AUC-ROC', 'AUC-PR']
         
-        print(f"{'Model':<20}", end="")
+        print(f"{'Model':<20} {'Size (MB)':<10} {'Size (KB)':<10}", end="")
         for metric in metric_names:
             print(f"{metric:<12}", end="")
         print()
-        print("-" * 92)
+        print("-" * 110)
         
         for model_name, result in results.items():
-            print(f"{model_name:<20}", end="")
+            # Get model size
+            if model_name == 'Neural Network':
+                model = self.neural_network
+            else:
+                model = self.trained_models[model_name]
+            
+            size_mb, size_kb = self.get_model_size(model, model_name)
+            
+            if size_mb is not None:
+                print(f"{model_name:<20} {size_mb:<10.2f} {size_kb:<10.1f}", end="")
+            else:
+                print(f"{model_name:<20} {'ERROR':<10} {'ERROR':<10}", end="")
+            
             for metric in metrics:
                 print(f"{result[metric]:<12.4f}", end="")
             print()
@@ -440,6 +541,19 @@ class AdultContentDetector:
         for model_name, result in results.items():
             print(f"\n{model_name.upper()}")
             print("-" * len(model_name))
+            
+            # Print model size
+            if model_name == 'Neural Network':
+                model = self.neural_network
+            else:
+                model = self.trained_models[model_name]
+            
+            size_mb, size_kb = self.get_model_size(model, model_name)
+            if size_mb is not None:
+                print(f"Model Size: {size_mb:.2f} MB ({size_kb:.1f} KB)")
+            else:
+                print(f"Model Size: ERROR measuring size")
+            
             print(f"Accuracy:  {result['accuracy']:.4f}")
             print(f"Precision: {result['precision']:.4f}")
             print(f"Recall:    {result['recall']:.4f}")
@@ -453,6 +567,45 @@ class AdultContentDetector:
             print(f"                Non-Adult  Adult")
             print(f"Actual Non-Adult    {cm[0,0]:<8}  {cm[0,1]:<5}")
             print(f"      Adult         {cm[1,0]:<8}  {cm[1,1]:<5}")
+        
+        # Print size summary
+        print("\n" + "="*80)
+        print("MODEL SIZE SUMMARY")
+        print("="*80)
+        
+        sizes = {}
+        for model_name, result in results.items():
+            if model_name == 'Neural Network':
+                model = self.neural_network
+            else:
+                model = self.trained_models[model_name]
+            
+            size_mb, size_kb = self.get_model_size(model, model_name)
+            if size_mb is not None:
+                sizes[model_name] = size_mb
+        
+        if sizes:
+            total_size = sum(sizes.values())
+            largest_model = max(sizes, key=sizes.get)
+            smallest_model = min(sizes, key=sizes.get)
+            
+            print(f"Total size of all models: {total_size:.2f} MB")
+            print(f"Largest model: {largest_model} ({sizes[largest_model]:.2f} MB)")
+            print(f"Smallest model: {smallest_model} ({sizes[smallest_model]:.2f} MB)")
+            print(f"Average model size: {np.mean(list(sizes.values())):.2f} MB")
+            
+            # Size categories
+            small_models = [name for name, size in sizes.items() if size < 1.0]
+            medium_models = [name for name, size in sizes.items() if 1.0 <= size < 10.0]
+            large_models = [name for name, size in sizes.items() if size >= 10.0]
+            
+            print("\nSize Categories:")
+            if small_models:
+                print(f"  Small (< 1 MB): {', '.join(small_models)}")
+            if medium_models:
+                print(f"  Medium (1-10 MB): {', '.join(medium_models)}")
+            if large_models:
+                print(f"  Large (≥ 10 MB): {', '.join(large_models)}")
     
     def run_complete_pipeline(self, file_path):
         """Run the complete pipeline"""
@@ -488,6 +641,13 @@ class AdultContentDetector:
         results['Neural Network'] = self.evaluate_model(
             self.neural_network, self.X_test_padded, self.y_test, 'Neural Network'
         )
+        
+        # Class distribution summary
+        self.print_class_distribution()
+        
+        # Evaluate and print AUC metrics for all splits
+        results_by_split = self.evaluate_all_splits()
+        self.print_auc_results(results_by_split)
         
         # Print and plot results
         self.print_results(results)
